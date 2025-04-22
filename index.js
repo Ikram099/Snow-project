@@ -4,6 +4,9 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const kafka = require('kafka-node');
 const ProductOffering = require('./models/ProductOffering');
+const ProductSpecification = require('./models/ProductSpecification'); // ✅ Nouveau modèle ajouté
+
+
 
 const app = express();
 app.use(bodyParser.json());
@@ -61,6 +64,71 @@ app.post('/send-offering', async (req, res) => {
     console.log('📨 Message envoyé à Kafka avec succès :', data);
     res.status(200).json({ message: 'Offre envoyée à Kafka et MongoDB', data });
   });
+});
+
+// Route : Product Specification ✅ NOUVELLE ROUTE
+app.post('/send-specification', async (req, res) => {
+  const specification = req.body;
+
+  console.log('📦 Données Specification reçues de ServiceNow :', specification);
+
+  try {
+    // Vérifier si une spécification avec ce sys_id existe déjà
+    const existingSpec = await ProductSpecification.findOne({ sys_id: specification.sys_id });
+
+    if (existingSpec) {
+      // Si un document avec ce sys_id existe, on le met à jour
+      console.log(`⚠️ Spécification avec sys_id ${specification.sys_id} déjà existante. Mise à jour...`);
+      await ProductSpecification.updateOne({ sys_id: specification.sys_id }, specification);
+      console.log('✅ Spécification mise à jour dans MongoDB');
+    } else {
+      // Sinon, on crée un nouveau document
+      const newSpec = new ProductSpecification(specification);
+      await newSpec.save();
+      console.log('✅ Spécification enregistrée dans MongoDB');
+    }
+  } catch (err) {
+    console.error('❌ Erreur MongoDB Specification :', err);
+    return res.status(500).json({ error: 'Erreur MongoDB' });
+  }
+
+  // Envoi à Kafka
+  const payloads = [
+    {
+      topic: process.env.KAFKA_TOPIC_SPECIFICATION,
+      messages: JSON.stringify(specification),
+    },
+  ];
+
+  producer.send(payloads, (err, data) => {
+    if (err) {
+      console.error('❌ Erreur Kafka Specification :', err);
+      return res.status(500).json({ error: 'Erreur Kafka' });
+    }
+    console.log('📨 Message Specification envoyé à Kafka :', data);
+    res.status(200).json({ message: 'Specification envoyée à Kafka et MongoDB', data });
+  });
+});
+
+// ✅ Nouvelle Route DELETE : Supprimer une Product Specification
+app.delete('/delete-specification/:id', async (req, res) => {
+  const specSysId = req.params.id;
+
+  try {
+    // Recherche du document par sys_id et suppression
+    const result = await ProductSpecification.findOneAndDelete({ sys_id: specSysId });
+
+    if (result) {
+      console.log(`🗑️ Specification supprimée de MongoDB (sys_id = ${specSysId})`);
+      res.status(200).json({ message: 'Spécification supprimée avec succès.' });
+    } else {
+      console.warn(`⚠️ Aucune spécification trouvée avec sys_id = ${specSysId}`);
+      res.status(404).json({ message: 'Spécification introuvable.' });
+    }
+  } catch (err) {
+    console.error('❌ Erreur suppression MongoDB :', err);
+    res.status(500).json({ error: 'Erreur serveur lors de la suppression.' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
